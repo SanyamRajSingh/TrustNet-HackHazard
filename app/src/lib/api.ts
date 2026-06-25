@@ -1,4 +1,6 @@
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+console.log('[API] Base URL configured as:', API_BASE);
+
 
 interface InvestigateRequest {
   raw_input: string;
