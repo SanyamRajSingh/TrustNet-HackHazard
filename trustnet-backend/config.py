@@ -19,43 +19,70 @@ class Settings(BaseSettings):
     ENV: str = "production"
     API_V1_PREFIX: str = "/api/v1"
 
-    # Database
-    DATABASE_URL: str = Field(..., description="PostgreSQL connection string")
+    # Database — defaults to local SQLite for zero-config deploys
+    DATABASE_URL: str = Field(
+        default="sqlite+aiosqlite:///./trustnet.db",
+        description="Database connection string. Defaults to SQLite."
+    )
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
 
-    # Neo4j
-    NEO4J_URI: str = Field(..., description="Neo4j AuraDB connection URI")
-    NEO4J_USERNAME: str = Field(..., description="Neo4j username")
-    NEO4J_PASSWORD: str = Field(..., description="Neo4j password")
+    # Neo4j — optional; falls back to mock graph if not set
+    NEO4J_URI: str = Field(
+        default="",
+        description="Neo4j AuraDB connection URI (neo4j+s://...)"
+    )
+    NEO4J_USERNAME: str = Field(default="", description="Neo4j username")
+    NEO4J_PASSWORD: str = Field(default="", description="Neo4j password")
 
-    # Redis / Upstash
-    REDIS_URL: str = Field(..., description="Redis/Upstash connection URL")
+    # Redis / Upstash — optional; Celery runs sync if not set
+    REDIS_URL: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis/Upstash connection URL (optional)"
+    )
 
-    # JWT
-    SECRET_KEY: str = Field(..., description="JWT signing secret")
+    # JWT — has a safe default; OVERRIDE in production via env var
+    SECRET_KEY: str = Field(
+        default="trustnet-default-secret-change-in-production-xyz987",
+        description="JWT signing secret — set via SECRET_KEY env var"
+    )
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRATION_HOURS: int = 24
     JWT_REFRESH_EXPIRATION_DAYS: int = 7
 
-    # Sarvam AI
-    SARVAM_API_KEY: str = Field(..., description="Sarvam AI API key")
+    # Sarvam AI — optional; falls back to regex extractor
+    SARVAM_API_KEY: str = Field(
+        default="",
+        description="Sarvam AI API key (optional — regex fallback used if empty)"
+    )
     SARVAM_API_BASE: str = "https://api.sarvam.ai/v1"
     SARVAM_TIMEOUT: int = 4
     SARVAM_MAX_RETRIES: int = 3
 
-    # External APIs
-    WHOIS_API_KEY: str = Field(..., description="WhoisXML API key")
-    GOOGLE_SAFE_BROWSING_KEY: str = Field(..., description="Google Safe Browsing API key")
-    PHISHTANK_API_KEY: str = Field("", description="PhishTank API key (optional)")
-    NUMVERIFY_API_KEY: str = Field(..., description="NumVerify API key")
-    CLOUDINARY_URL: str = Field("", description="Cloudinary connection string")
+    # External APIs — all optional; mocks returned if keys missing
+    WHOIS_API_KEY: str = Field(default="", description="WhoisXML API key (optional)")
+    GOOGLE_SAFE_BROWSING_KEY: str = Field(
+        default="",
+        description="Google Safe Browsing API key (optional)"
+    )
+    PHISHTANK_API_KEY: str = Field(default="", description="PhishTank API key (optional)")
+    NUMVERIFY_API_KEY: str = Field(default="", description="NumVerify API key (optional)")
+    CLOUDINARY_URL: str = Field(default="", description="Cloudinary connection string (optional)")
 
-    # Blockchain (Base Sepolia)
-    BASE_SEPOLIA_RPC: str = Field(..., description="Base Sepolia RPC endpoint")
-    BACKEND_WALLET_PRIVATE_KEY: str = Field(..., description="Backend wallet private key")
-    TRUSTNET_CONTRACT_ADDRESS: str = Field(..., description="Deployed contract address")
-    BLOCKCHAIN_ENABLED: bool = True
+    # Blockchain — disabled by default; set BLOCKCHAIN_ENABLED=true to activate
+    BASE_SEPOLIA_RPC: str = Field(
+        default="https://sepolia.base.org",
+        description="Base Sepolia RPC endpoint"
+    )
+    BACKEND_WALLET_PRIVATE_KEY: str = Field(
+        default="",
+        description="Backend wallet private key (only needed if BLOCKCHAIN_ENABLED=true)"
+    )
+    TRUSTNET_CONTRACT_ADDRESS: str = Field(
+        default="",
+        description="Deployed contract address (only needed if BLOCKCHAIN_ENABLED=true)"
+    )
+    BLOCKCHAIN_ENABLED: bool = False
 
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 30
@@ -94,9 +121,14 @@ class Settings(BaseSettings):
     WORKFLOW_COMMUNITY_RECALC_MINUTES: int = 30
     WORKFLOW_BLOCKCHAIN_SYNC_HOUR: int = 1
 
-    # Frontend URL
+    # Frontend URL / CORS
     FRONTEND_URL: str = "http://localhost:5173"
-    CORS_ORIGINS: str = "http://localhost:5173,https://trustnet.onrender.com"
+    CORS_ORIGINS: str = (
+        "http://localhost:5173,"
+        "http://localhost:3000,"
+        "https://trustnet-frontend.onrender.com,"
+        "https://trustnet.onrender.com"
+    )
 
     @field_validator("CORS_ORIGINS")
     def parse_cors(cls, v: str) -> str:

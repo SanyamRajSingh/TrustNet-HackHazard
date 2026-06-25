@@ -120,9 +120,9 @@ class SarvamService:
         self.base_url    = settings.SARVAM_API_BASE
         self.timeout     = settings.SARVAM_TIMEOUT
         self.max_retries = settings.SARVAM_MAX_RETRIES
-        self.headers     = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type":  "application/json",
+        self.headers = {
+            "api-subscription-key": self.api_key,
+            "Content-Type": "application/json",
         }
 
     # ------------------------------------------------------------------
@@ -202,7 +202,7 @@ class SarvamService:
                 {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                 {"role": "user",   "content": input_text},
             ],
-            "model":       "sarvam-1",
+            "model":       "sarvam-2b",
             "temperature": 0.1,
         }
         if lang_code:
@@ -249,7 +249,7 @@ class SarvamService:
             "messages": [
                 {"role": "user", "content": "ping"},
             ],
-            "model":       "sarvam-1",
+            "model":       "sarvam-2b",
             "temperature": 0.0,
             "max_tokens":  1,
         }

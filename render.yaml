@@ -6,44 +6,58 @@ services:
     name: trustnet-backend
     env: docker
     dockerfilePath: ./Dockerfile.backend
+    dockerContext: .
     region: singapore
     plan: free
     healthCheckPath: /health
     envVars:
+      # Database — SQLite for zero-config deploy (swap for PostgreSQL for prod)
       - key: DATABASE_URL
-        value: sqlite+aiosqlite:///./test.db
+        value: sqlite+aiosqlite:///./trustnet.db
+
+      # Neo4j AuraDB — set these in Render Dashboard → Environment
       - key: NEO4J_URI
         sync: false
       - key: NEO4J_USERNAME
         sync: false
       - key: NEO4J_PASSWORD
         sync: false
+
+      # Sarvam AI — optional, regex fallback used if empty
       - key: SARVAM_API_KEY
         sync: false
+
+      # External enrichment APIs — all optional
       - key: WHOIS_API_KEY
         sync: false
       - key: GOOGLE_SAFE_BROWSING_KEY
         sync: false
       - key: NUMVERIFY_API_KEY
         sync: false
-      - key: BASE_SEPOLIA_RPC
-        sync: false
-      - key: BACKEND_WALLET_PRIVATE_KEY
-        sync: false
-      - key: TRUSTNET_CONTRACT_ADDRESS
-        sync: false
+
+      # Redis — not required for demo; Celery runs sync without it
+      - key: REDIS_URL
+        value: "redis://localhost:6379/0"
+
+      # Blockchain — disabled; no keys required
       - key: BLOCKCHAIN_ENABLED
         value: "false"
 
+      # JWT — override with a strong random secret in production
+      - key: SECRET_KEY
+        sync: false
+
+      # CORS — allow frontend origin
+      - key: CORS_ORIGINS
+        value: "https://trustnet-frontend.onrender.com,http://localhost:5173"
+
   # -------------------------
-  # 2. React Frontend (Static Site)
+  # 2. React Frontend (Static Site via Docker / Nginx)
   # -------------------------
   - type: web
     name: trustnet-frontend
     env: docker
     dockerfilePath: ./Dockerfile.frontend
+    dockerContext: .
     region: singapore
     plan: free
-    # Note: If you prefer a native static site, you can change `type: web` to `type: static`,
-    # set `buildCommand: npm install && npm run build` and `publishPath: dist`.
-    # But this uses the Dockerfile.frontend for parity with local testing.
