@@ -30,6 +30,16 @@ from app.services.safebrowsing import PhishTankService, SafeBrowsingService, URL
 from app.services.sarvam_service import SarvamService
 from app.services.whois_service import DNSAuthService, WHOISService
 
+def serialize_datetimes(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: serialize_datetimes(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_datetimes(i) for i in obj]
+    return obj
+
+
 router = APIRouter()
 
 # Initialize services
@@ -197,14 +207,14 @@ async def investigate(
     investigation = Investigation(
         raw_input=body.raw_input,
         input_type=body.input_type,
-        entities_json=entities,
+        entities_json=serialize_datetimes(entities),
         trust_score=trust_result["trust_score"],
         confidence_score=trust_result["confidence_score"],
         verdict=trust_result["verdict"],
         category_scores_json=trust_result["category_scores"],
-        evidence_json=trust_result["evidence"],
+        evidence_json=serialize_datetimes(trust_result["evidence"]),
         hindi_explanation=hindi_report,
-        neo4j_connections_json=ring_connections,
+        neo4j_connections_json=serialize_datetimes(ring_connections),
         processing_ms=processing_ms,
         fee_amount_inr=entities.get("fee_amount"),
         language_detected=entities.get("language_detected"),
