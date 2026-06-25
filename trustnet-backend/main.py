@@ -25,12 +25,9 @@ app = FastAPI(
 )
 
 # Middleware
-cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:5173")
-origins = [origin.strip() for origin in cors_origins.split(",") if origin.strip()]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["https://trustnet-frontend-8okg.onrender.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
