@@ -13,7 +13,11 @@ RUN npm install -g npm@11 --quiet
 
 # Copy package manifests and install dependencies
 COPY app/package.json app/package-lock.json* ./
-RUN npm install --legacy-peer-deps
+
+# Force official npm registry — package-lock.json may reference a local mirror
+# (e.g. npm.mirrors.msh.team) that is unreachable from Docker build containers.
+RUN npm config set registry https://registry.npmjs.org && \
+    npm install --legacy-peer-deps
 
 # Copy full source
 COPY app/ .
