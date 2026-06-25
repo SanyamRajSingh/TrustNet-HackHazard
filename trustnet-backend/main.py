@@ -27,7 +27,7 @@ app = FastAPI(
 # Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://trustnet-frontend-80kg.onrender.com"],
+    allow_origins=["https://trustnet-frontend-8okg.onrender.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
