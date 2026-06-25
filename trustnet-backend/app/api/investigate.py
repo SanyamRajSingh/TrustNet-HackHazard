@@ -6,12 +6,15 @@ POST /api/v1/investigate - Main investigation endpoint
 import asyncio
 import hashlib
 import time
-from datetime import datetime
 from typing import Optional
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.serialization import sanitize_for_json
 from app.core.trust_engine import CategoryScorer, TrustEngine, VERDICT_CONFIG
 from app.models.database import get_db
 from app.models.postgres import Entity, Investigation, StatsCounter
@@ -30,22 +33,7 @@ from app.services.safebrowsing import PhishTankService, SafeBrowsingService, URL
 from app.services.sarvam_service import SarvamService
 from app.services.whois_service import DNSAuthService, WHOISService
 
-try:
-    from neo4j.time import DateTime as Neo4jDateTime, Date as Neo4jDate
-except ImportError:
-    Neo4jDateTime = type("Neo4jDateTime", (), {})
-    Neo4jDate = type("Neo4jDate", (), {})
-
-def sanitize_for_json(obj):
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    elif isinstance(obj, (Neo4jDateTime, Neo4jDate)):
-        return obj.isoformat()
-    elif isinstance(obj, dict):
-        return {k: sanitize_for_json(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [sanitize_for_json(i) for i in obj]
-    return obj
+logger = structlog.get_logger()
 
 
 router = APIRouter()
@@ -271,8 +259,15 @@ async def investigate(
         db.add(entity)
         await db.commit()
 
-    # Build response
-    return InvestigationResponse(
+    # ── Build and serialize response ─────────────────────────────────────
+    # Construct the typed response model first so Pydantic validates all
+    # fields.  Then dump to a plain Python dict (mode="python" gives native
+    # Python objects, not JSON strings), run sanitize_for_json to convert
+    # any remaining neo4j temporal objects to ISO-8601 strings, and finally
+    # let jsonable_encoder + JSONResponse perform the actual JSON encoding.
+    # This guarantees no temporal object ever reaches Pydantic's JSON
+    # serializer, which cannot handle neo4j.time.*.
+    response_model = InvestigationResponse(
         id=str(investigation.id),
         trust_score=trust_result["trust_score"],
         confidence_score=trust_result["confidence_score"],
@@ -288,6 +283,19 @@ async def investigate(
         processing_ms=processing_ms,
         created_at=investigation.created_at,
     )
+
+    try:
+        raw_dict = response_model.model_dump(mode="python")
+        safe_dict = sanitize_for_json(raw_dict)
+        return JSONResponse(content=jsonable_encoder(safe_dict))
+    except Exception as _ser_exc:
+        logger.error(
+            "investigate.serialization_failed",
+            investigation_id=str(investigation.id),
+            exc_type=type(_ser_exc).__name__,
+            exc=str(_ser_exc),
+        )
+        raise
 
 
 # ============== Helper async functions ==============

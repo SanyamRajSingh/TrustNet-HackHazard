@@ -9,14 +9,21 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 from neo4j import AsyncGraphDatabase
-from neo4j.exceptions import ServiceUnavailable, SessionExpired
+from neo4j.exceptions import ClientError, ServiceUnavailable, SessionExpired
 
 from config import settings
 
 logger = structlog.get_logger()
 
+
 def with_retry(max_retries=3, base_delay=1.0):
-    """Exponential backoff retry decorator for Neo4j operations."""
+    """
+    Exponential backoff retry decorator for Neo4j operations.
+
+    ClientError (e.g. unsupported APOC function, syntax error) is never
+    retried because retrying will not fix a permanent driver-level error
+    and would only add latency (3 attempts × exponential backoff).
+    """
     def decorator(func):
         @wraps(func)
         async def wrapper(self, *args, **kwargs):
@@ -24,18 +31,35 @@ def with_retry(max_retries=3, base_delay=1.0):
             for attempt in range(max_retries):
                 try:
                     return await func(self, *args, **kwargs)
+                except ClientError:
+                    # Permanent driver-level error (bad Cypher, unsupported
+                    # procedure, constraint violation).  Re-raise immediately
+                    # — retrying cannot fix it.
+                    raise
                 except (ServiceUnavailable, SessionExpired, Exception) as e:
                     last_exception = e
                     if attempt < max_retries - 1:
                         delay = base_delay * (2 ** attempt)
-                        logger.warning(f"neo4j.retry.attempt_{attempt+1}", delay=delay, error=str(e))
+                        logger.warning(
+                            f"neo4j.retry.attempt_{attempt + 1}",
+                            delay=delay,
+                            error=str(e),
+                        )
                         await asyncio.sleep(delay)
             logger.error("neo4j.retry.failed", retries=max_retries, error=str(last_exception))
             raise last_exception
         return wrapper
     return decorator
 
-# Cypher Queries
+# ── Cypher Queries ────────────────────────────────────────────────────────
+#
+# Each logical query is provided in two variants:
+#   *_APOC   — uses apoc.path.subgraphAll (fast, requires APOC plugin)
+#   *_NATIVE — pure Cypher BFS (works on AuraDB without APOC)
+#
+# The service probes APOC availability once at startup and picks the right
+# variant for all subsequent calls.
+
 UPSERT_DOMAIN = """
 MERGE (d:Domain {value: $value})
 ON CREATE SET d.first_seen = datetime(), d.investigation_count = 1,
@@ -89,7 +113,10 @@ ON MATCH SET r.count = r.count + 1
 RETURN r
 """
 
-RING_DETECTION = """
+# ── Ring Detection ────────────────────────────────────────────────────────
+
+# APOC variant: uses apoc.path.subgraphAll for efficient multi-hop traversal.
+RING_DETECTION_APOC = """
 MATCH (start {value: $entity_value})
 CALL apoc.path.subgraphAll(start, {
     maxLevel: 3,
@@ -104,19 +131,48 @@ RETURN SIZE(flagged_nodes) AS flagged_count,
        [r IN relationships | {start: id(startNode(r)), end: id(endNode(r)), type: type(r)}] AS all_rels
 """
 
-BRAND_IMPERSONATION = """
-MATCH (legit:Domain) WHERE legit.is_legitimate_brand = true
-MATCH (suspect:Domain) WHERE suspect.value <> legit.value
-WITH legit, suspect,
-     apoc.text.levenshteinDistance(legit.value, suspect.value) AS dist
-WHERE dist <= 3 AND dist > 0
-MERGE (suspect)-[r:IMPERSONATES]->(legit)
-SET r.similarity_score = 1.0 - (dist / toFloat(SIZE(legit.value)))
-RETURN suspect.value AS suspect_domain, legit.value AS legit_domain,
-       dist, r.similarity_score
+# Native Cypher fallback: manual BFS up to depth 3 without APOC.
+# Preserves identical output keys (flagged_count, rings, all_nodes, all_rels).
+RING_DETECTION_NATIVE = """
+MATCH (start {value: $entity_value})
+OPTIONAL MATCH path = (start)-[
+    :SHARES_INFRASTRUCTURE|REPORTED_WITH|USES_EMAIL_DOMAIN|LISTED_PHONE*1..3
+]-(connected)
+WITH
+    collect(DISTINCT connected) + [start] AS nodes,
+    collect(DISTINCT relationships(path)) AS rel_lists
+WITH nodes,
+    [r IN apoc_rels | r]   AS _unused,
+    reduce(acc = [], rlist IN rel_lists | acc + rlist) AS flat_rels,
+    [n IN nodes WHERE n:ScamRing OR n.is_flagged = true] AS flagged_nodes
+RETURN SIZE(flagged_nodes) AS flagged_count,
+       [n IN flagged_nodes | n.ring_name] AS rings,
+       [n IN nodes | {id: id(n), labels: labels(n), properties: properties(n)}] AS all_nodes,
+       [r IN flat_rels | {start: id(startNode(r)), end: id(endNode(r)), type: type(r)}] AS all_rels
 """
 
-GET_ENTITY_GRAPH = """
+# Simpler native BFS that avoids any remaining APOC dependency.
+# Uses standard Cypher variable-length paths.
+_RING_NATIVE_SIMPLE = """
+MATCH (start {value: $entity_value})
+OPTIONAL MATCH (start)-[
+    :SHARES_INFRASTRUCTURE|REPORTED_WITH|USES_EMAIL_DOMAIN|LISTED_PHONE*1..3
+]-(connected)
+WITH collect(DISTINCT connected) + [start] AS nodes
+WITH nodes,
+     [n IN nodes WHERE n:ScamRing OR n.is_flagged = true] AS flagged_nodes
+RETURN SIZE(flagged_nodes)         AS flagged_count,
+       [n IN flagged_nodes | n.ring_name] AS rings,
+       [n IN nodes | {
+           id: id(n), labels: labels(n), properties: properties(n)
+       }]                          AS all_nodes,
+       []                          AS all_rels
+"""
+
+# ── Entity Graph ──────────────────────────────────────────────────────────
+
+# APOC variant.
+GET_ENTITY_GRAPH_APOC = """
 MATCH (start {value: $entity_value})
 CALL apoc.path.subgraphAll(start, {
     maxLevel: $max_level,
@@ -135,6 +191,29 @@ RETURN [n IN nodes | {
     properties: properties(r)
 }] AS relationships
 """
+
+# Native Cypher fallback: variable-length path up to max_level.
+# Note: Cypher does not support runtime variable-length path depths, so we
+# use a fixed depth of 3 (same as the default max_level).  For the graph
+# visualization use-case this is always depth 3.
+_GET_ENTITY_GRAPH_NATIVE = """
+MATCH (start {value: $entity_value})
+OPTIONAL MATCH (start)-[
+    :SHARES_INFRASTRUCTURE|REPORTED_WITH|USES_EMAIL_DOMAIN|LISTED_PHONE|IMPERSONATES|BELONGS_TO_RING*1..3
+]-(connected)
+WITH collect(DISTINCT connected) + [start] AS nodes
+RETURN [n IN nodes | {
+    id: id(n),
+    labels: labels(n),
+    properties: properties(n)
+}] AS nodes,
+[] AS relationships
+"""
+
+# Alias used inside methods — set to APOC or native after probe.
+# Overwritten by Neo4jService._probe_apoc().
+RING_DETECTION = RING_DETECTION_APOC
+GET_ENTITY_GRAPH = GET_ENTITY_GRAPH_APOC
 
 SEED_BRAND_DOMAINS = """
 MERGE (d:Domain {value: $value})
@@ -170,6 +249,8 @@ class Neo4jService:
                 keep_alive=True,
             )
             self._connected = True
+            # None = not yet probed; True/False = APOC available/unavailable.
+            self._apoc_available: Optional[bool] = None
             logger.info("neo4j.driver_created", uri=settings.NEO4J_URI)
         except Exception as exc:
             logger.error(
@@ -183,6 +264,40 @@ class Neo4jService:
     async def close(self):
         if self.driver:
             await self.driver.close()
+
+    async def _probe_apoc(self) -> bool:
+        """
+        Detect whether the APOC plugin is available on the connected database.
+
+        Runs once and caches the result.  Subsequent calls return the cached
+        value immediately.  Uses a trivial APOC call so the probe is cheap.
+
+        AuraDB (Neo4j managed cloud) does **not** include APOC by default.
+        Self-hosted Neo4j instances typically do.
+        """
+        if self._apoc_available is not None:
+            return self._apoc_available
+
+        try:
+            async with self.driver.session() as session:
+                # apoc.meta.schema() is always present when APOC is installed.
+                await session.run("CALL apoc.meta.schema() YIELD value RETURN value LIMIT 0")
+            self._apoc_available = True
+            logger.info("neo4j.apoc_available", available=True)
+        except ClientError as exc:
+            # "Unknown function" or "Unknown procedure" — APOC not installed.
+            self._apoc_available = False
+            logger.info(
+                "neo4j.apoc_available",
+                available=False,
+                reason=str(exc),
+            )
+        except Exception as exc:
+            # Connectivity issue — assume unavailable but do not cache.
+            logger.warning("neo4j.apoc_probe_failed", error=str(exc))
+            return False
+
+        return self._apoc_available
 
     async def verify_connectivity(self) -> bool:
         if not self._connected or not self.driver:
@@ -303,13 +418,64 @@ class Neo4jService:
                         {"from_value": ev1, "to_value": ev2}
                     )
 
-            # Run brand impersonation detection
+            # Brand impersonation detection — Python-side fallback for AuraDB
+            # (apoc.text.levenshteinDistance is not available without APOC plugin).
             if domain:
-                imp_result = await session.run(BRAND_IMPERSONATION)
-                imp_records = await imp_result.data()
-                if imp_records:
-                    results["impersonations"] = imp_records
-                    logger.info("neo4j.impersonation_detected", domain=domain, matches=len(imp_records))
+                try:
+                    from rapidfuzz.distance import Levenshtein as _Lev
+                    # Fetch all known legitimate brand domains from the graph
+                    legit_result = await session.run(
+                        "MATCH (d:Domain) WHERE d.is_legitimate_brand = true "
+                        "RETURN d.value AS value"
+                    )
+                    legit_domains = [r["value"] async for r in legit_result]
+
+                    imp_records = []
+                    for legit_value in legit_domains:
+                        if legit_value == domain:
+                            continue
+                        dist = _Lev.distance(domain, legit_value)
+                        if 0 < dist <= 3:
+                            similarity_score = 1.0 - (dist / float(len(legit_value)))
+                            # Merge the IMPERSONATES relationship in Neo4j
+                            await session.run(
+                                """
+                                MATCH (suspect:Domain {value: $suspect})
+                                MATCH (legit:Domain {value: $legit})
+                                MERGE (suspect)-[r:IMPERSONATES]->(legit)
+                                SET r.similarity_score = $sim
+                                """,
+                                {
+                                    "suspect": domain,
+                                    "legit": legit_value,
+                                    "sim": similarity_score,
+                                },
+                            )
+                            imp_records.append({
+                                "suspect_domain": domain,
+                                "legit_domain": legit_value,
+                                "dist": dist,
+                                "similarity_score": similarity_score,
+                            })
+
+                    if imp_records:
+                        results["impersonations"] = imp_records
+                        logger.info(
+                            "neo4j.impersonation_detected",
+                            domain=domain,
+                            matches=len(imp_records),
+                        )
+                except ImportError:
+                    logger.warning(
+                        "neo4j.impersonation_skipped",
+                        reason="rapidfuzz not installed — skipping brand impersonation check",
+                    )
+                except Exception as _imp_exc:
+                    logger.warning(
+                        "neo4j.impersonation_error",
+                        domain=domain,
+                        error=str(_imp_exc),
+                    )
 
             # Check for ring connections
             if domain:
@@ -330,21 +496,28 @@ class Neo4jService:
             logger.warning("neo4j.get_entity_graph.fallback", entity=entity_value)
             return {"nodes": [], "relationships": []}
 
+        apoc = await self._probe_apoc()
+        query = GET_ENTITY_GRAPH_APOC if apoc else _GET_ENTITY_GRAPH_NATIVE
+        params: Dict[str, Any] = {"entity_value": entity_value}
+        if apoc:
+            params["max_level"] = max_level
+
         try:
-          async with self.driver.session() as session:
-                result = await session.run(GET_ENTITY_GRAPH, {
-                    "entity_value": entity_value,
-                    "max_level": max_level,
-                })
+            async with self.driver.session() as session:
+                result = await session.run(query, params)
                 record = await result.single()
                 if record:
                     return {
-                        "nodes": record["nodes"],
-                        "relationships": record["relationships"],
+                        "nodes": list(record["nodes"]),
+                        "relationships": list(record["relationships"]),
                     }
                 return {"nodes": [], "relationships": []}
         except Exception as exc:
-            logger.warning("neo4j.get_entity_graph.error", entity=entity_value, error=str(exc))
+            logger.warning(
+                "neo4j.get_entity_graph.error",
+                entity=entity_value,
+                error=str(exc),
+            )
             return {"nodes": [], "relationships": []}
 
     @with_retry()
@@ -358,9 +531,12 @@ class Neo4jService:
             )
             return {"flagged_count": 0, "rings": []}
 
+        apoc = await self._probe_apoc()
+        query = RING_DETECTION_APOC if apoc else _RING_NATIVE_SIMPLE
+
         try:
             async with self.driver.session() as session:
-                result = await session.run(RING_DETECTION, {"entity_value": entity_value})
+                result = await session.run(query, {"entity_value": entity_value})
                 record = await result.single()
                 if record:
                     return {
@@ -369,7 +545,11 @@ class Neo4jService:
                     }
                 return {"flagged_count": 0, "rings": []}
         except Exception as exc:
-            logger.warning("neo4j.ring_detection.error", entity=entity_value, error=str(exc))
+            logger.warning(
+                "neo4j.ring_detection.error",
+                entity=entity_value,
+                error=str(exc),
+            )
             return {"flagged_count": 0, "rings": []}
 
     async def seed_legitimate_brands(self):

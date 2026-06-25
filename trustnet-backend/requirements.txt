@@ -54,3 +54,6 @@ httpx>=0.26.0
 
 # Monitoring
 sentry-sdk[fastapi]>=1.39.2
+
+# String similarity — fallback for apoc.text.levenshteinDistance on AuraDB
+rapidfuzz>=3.6.1
