@@ -30,13 +30,21 @@ from app.services.safebrowsing import PhishTankService, SafeBrowsingService, URL
 from app.services.sarvam_service import SarvamService
 from app.services.whois_service import DNSAuthService, WHOISService
 
-def serialize_datetimes(obj):
+try:
+    from neo4j.time import DateTime as Neo4jDateTime, Date as Neo4jDate
+except ImportError:
+    Neo4jDateTime = type("Neo4jDateTime", (), {})
+    Neo4jDate = type("Neo4jDate", (), {})
+
+def sanitize_for_json(obj):
     if isinstance(obj, datetime):
         return obj.isoformat()
+    elif isinstance(obj, (Neo4jDateTime, Neo4jDate)):
+        return obj.isoformat()
     elif isinstance(obj, dict):
-        return {k: serialize_datetimes(v) for k, v in obj.items()}
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
     elif isinstance(obj, list):
-        return [serialize_datetimes(i) for i in obj]
+        return [sanitize_for_json(i) for i in obj]
     return obj
 
 
@@ -207,26 +215,21 @@ async def investigate(
     investigation = Investigation(
         raw_input=body.raw_input,
         input_type=body.input_type,
-        entities_json=serialize_datetimes(entities),
+        entities_json=sanitize_for_json(entities),
         trust_score=trust_result["trust_score"],
         confidence_score=trust_result["confidence_score"],
         verdict=trust_result["verdict"],
         category_scores_json=trust_result["category_scores"],
-        evidence_json=serialize_datetimes(trust_result["evidence"]),
+        evidence_json=sanitize_for_json(trust_result["evidence"]),
         hindi_explanation=hindi_report,
-        neo4j_connections_json={},  # Hotfix: bypass serialization crash
+        neo4j_connections_json=sanitize_for_json(ring_connections),
         processing_ms=processing_ms,
         fee_amount_inr=entities.get("fee_amount"),
         language_detected=entities.get("language_detected"),
     )
-    try:
-        db.add(investigation)
-        await db.commit()
-        await db.refresh(investigation)
-    except Exception as e:
-        import structlog
-        structlog.get_logger().error("investigation_save_failed", error=str(e))
-        investigation.id = f"fallback-{int(time.time())}"
+    db.add(investigation)
+    await db.commit()
+    await db.refresh(investigation)
 
     # Step 7: Upsert to Neo4j graph (non-blocking)
     if trust_result["confidence_score"] >= 25:
@@ -265,12 +268,8 @@ async def investigate(
             on_chain=bool(blockchain_tx),
             ring_name=ring_connections["rings"][0] if ring_connections["rings"] else None,
         )
-        try:
-            db.add(entity)
-            await db.commit()
-        except Exception as e:
-            import structlog
-            structlog.get_logger().error("entity_save_failed", error=str(e))
+        db.add(entity)
+        await db.commit()
 
     # Build response
     return InvestigationResponse(
