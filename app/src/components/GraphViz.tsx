@@ -24,7 +24,7 @@ export default function GraphViz({ graphData }: Props) {
   const fgRef = useRef<ForceGraphMethods>(null as any);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-  const [initialCenterDone, setInitialCenterDone] = useState(false);
+
 
   // Handle responsive resize
   useEffect(() => {
@@ -81,22 +81,40 @@ export default function GraphViz({ graphData }: Props) {
   useEffect(() => {
     const fg = fgRef.current;
     if (fg) {
-      // Modify existing forces instead of overwriting to preserve internal linkages
-      fg.d3Force('charge')?.strength(-600);
-      fg.d3Force('link')?.distance(120);
-      fg.d3Force('collide', d3.forceCollide().radius((node: any) => node.val + 20));
+      // Step 4: Increase repulsion and link distance
+      fg.d3Force('charge')?.strength(-2000);
+      fg.d3Force('link')?.distance(200);
       
-      // Trigger a reheat to apply the new forces
+      // Step 2: Use explicit type-based radius for collision to be absolutely safe
+      fg.d3Force('collide', d3.forceCollide().radius((node: any) => {
+        const val = node.val || (node.labels?.includes('ScamRing') ? 20 : node.labels?.includes('Domain') ? 14 : 10);
+        return val + 30; // Extra padding
+      }));
+      
       fg.d3ReheatSimulation();
+
+      // Step 1 & 6: Log node values and physics state
+      setTimeout(() => {
+        console.log("--- GRAPH DEBUG LOGS ---");
+        console.log("Nodes:", fgData.nodes.map(n => ({ id: n.id, labels: n.labels, val: n.val })));
+        console.log("Force config active:", {
+          charge: fg.d3Force('charge')?.strength(),
+          linkDistance: fg.d3Force('link')?.distance(),
+          collideActive: !!fg.d3Force('collide')
+        });
+      }, 1000);
     }
   }, [fgData, dimensions]);
 
   const handleEngineStop = useCallback(() => {
-    if (!initialCenterDone && fgRef.current) {
+    if (fgRef.current) {
       fgRef.current.zoomToFit(400, 50);
-      setInitialCenterDone(true);
+      
+      // Step 6: Log positions after settle
+      console.log("--- SIMULATION SETTLED ---");
+      console.log("Final node positions:", fgData.nodes.map(n => ({ id: n.id, x: (n as any).x, y: (n as any).y })));
     }
-  }, [initialCenterDone]);
+  }, [fgData.nodes]);
 
   if (!graphData || graphData.nodes.length === 0) {
     return (
@@ -107,7 +125,8 @@ export default function GraphViz({ graphData }: Props) {
     );
   }
 
-  const isHierarchical = fgData.nodes.length <= 8;
+  // Step 3: Temporarily disable dagMode
+  const isHierarchical = false; // fgData.nodes.length <= 8;
 
   return (
     <div className="space-y-3">
@@ -134,6 +153,10 @@ export default function GraphViz({ graphData }: Props) {
             dagLevelDistance={100}
             nodeRelSize={1}
             nodeId="id"
+            // Step 5: Increase simulation duration
+            warmupTicks={300}
+            cooldownTicks={200}
+            cooldownTime={5000}
             // Tooltip (hover text)
             nodeLabel={getNodeLabel}
             // Rendering nodes
