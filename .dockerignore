@@ -1,0 +1,35 @@
+# ─── Frontend ───────────────────────────────────────────────────────────────
+# node_modules is the biggest offender — Docker rebuilds them inside the image
+app/node_modules
+app/.vite
+app/dist
+app/.cache
+
+# ─── Backend ────────────────────────────────────────────────────────────────
+trustnet-backend/__pycache__
+trustnet-backend/**/__pycache__
+trustnet-backend/.venv
+trustnet-backend/venv
+trustnet-backend/*.pyc
+trustnet-backend/**/*.pyc
+trustnet-backend/.pytest_cache
+trustnet-backend/.mypy_cache
+trustnet-backend/trustnet.db
+trustnet-backend/test.db
+trustnet-backend/*.db
+trustnet-backend/htmlcov
+trustnet-backend/.coverage
+
+# ─── Git / IDE ───────────────────────────────────────────────────────────────
+.git
+.gitignore
+.vscode
+.idea
+*.swp
+*.swo
+
+# ─── Misc ────────────────────────────────────────────────────────────────────
+*.md
+*.log
+.DS_Store
+Thumbs.db
