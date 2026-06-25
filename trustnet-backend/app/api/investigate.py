@@ -260,13 +260,20 @@ async def investigate(
         await db.commit()
 
     # ── Build and serialize response ─────────────────────────────────────
-    # Construct the typed response model first so Pydantic validates all
-    # fields.  Then dump to a plain Python dict (mode="python" gives native
-    # Python objects, not JSON strings), run sanitize_for_json to convert
-    # any remaining neo4j temporal objects to ISO-8601 strings, and finally
-    # let jsonable_encoder + JSONResponse perform the actual JSON encoding.
-    # This guarantees no temporal object ever reaches Pydantic's JSON
-    # serializer, which cannot handle neo4j.time.*.
+    # IMPORTANT: sanitize_for_json MUST be called on ring_connections BEFORE
+    # constructing InvestigationResponse.
+    #
+    # Pydantic v2's model_dump(mode="python") calls pydantic-core serializers
+    # which raise PydanticSerializationError for unknown types even in Python
+    # mode. When Neo4j returns actual graph nodes (e.g. for domains in seeded
+    # scam rings), the node properties dict contains neo4j.time.DateTime
+    # objects (from Cypher `datetime()` calls). These must be converted to
+    # ISO-8601 strings BEFORE they enter the Pydantic model.
+    #
+    # sanitize_for_json is idempotent — safe to call again on the dict after
+    # model_dump to catch any SQLAlchemy datetime (created_at) as well.
+    safe_ring_connections = sanitize_for_json(ring_connections)
+
     response_model = InvestigationResponse(
         id=str(investigation.id),
         trust_score=trust_result["trust_score"],
@@ -278,7 +285,7 @@ async def investigate(
         category_scores=trust_result["category_scores"],
         evidence=[EvidenceItem(**e) for e in trust_result["evidence"]],
         hindi_explanation=hindi_report,
-        graph_connections=ring_connections,
+        graph_connections=safe_ring_connections,
         blockchain_tx_hash=blockchain_tx,
         processing_ms=processing_ms,
         created_at=investigation.created_at,
