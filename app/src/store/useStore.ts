@@ -6,6 +6,8 @@ export interface ExtractedEntities {
   phone_number: string | null;
   website_url: string | null;
   recruiter_name: string | null;
+  job_title: string | null;
+  location: string | null;
   salary_mentioned: number | null;
   fee_amount: number | null;
   urgency_indicators: boolean;
@@ -39,7 +41,7 @@ export interface InvestigationResult {
   category_scores: Record<string, CategoryScore>;
   evidence: EvidenceItem[];
   hindi_explanation: string | null;
-  graph_connections: { flagged_count: number; rings: string[] } | null;
+  graph_connections: { flagged_count: number; rings: string[]; nodes: any[]; relationships: any[] } | null;
   blockchain_tx_hash: string | null;
   processing_ms: number;
   created_at: string;

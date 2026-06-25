@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { Network } from 'lucide-react';
-import { api } from '../lib/api';
 
 interface GraphNode {
   id: number;
