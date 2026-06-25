@@ -183,11 +183,12 @@ async def investigate(
         })
 
     # Step 5: Generate Hindi report
-    hindi_report = await sarvam_service.generate_hindi_from_investigation({
-        "verdict": trust_result["verdict"],
-        "trust_score": trust_result["trust_score"],
-        "evidence": trust_result["evidence"],
-    })
+    hindi_report = await sarvam_service.generate_hindi_from_investigation(
+        trust_score=trust_result["trust_score"],
+        verdict=trust_result["verdict"],
+        key_findings=trust_result.get("evidence", []),
+        entities=entities,
+    )
 
     # Calculate processing time
     processing_ms = int((time.time() - start_time) * 1000)

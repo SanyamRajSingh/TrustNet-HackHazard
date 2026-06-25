@@ -132,7 +132,9 @@ class SarvamService:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # Use httpx with explicit transport — fixes uvloop/c-ares DNS failure in Docker
+            transport = httpx.AsyncHTTPTransport(retries=1)
+            async with httpx.AsyncClient(timeout=self.timeout, transport=transport) as client:
                 resp = await client.post(
                     f"{self.base_url}{CHAT_ENDPOINT}",
                     json=payload,
@@ -234,7 +236,8 @@ class SarvamService:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            transport = httpx.AsyncHTTPTransport(retries=1)
+            async with httpx.AsyncClient(timeout=self.timeout, transport=transport) as client:
                 resp = await client.post(
                     f"{self.base_url}{TRANSLATE_ENDPOINT}",
                     json=payload,
@@ -274,7 +277,8 @@ class SarvamService:
         Returns {"status": "ok", "models": [...]} or raises HTTPException.
         """
         try:
-            async with httpx.AsyncClient(timeout=8) as client:
+            transport = httpx.AsyncHTTPTransport(retries=1)
+            async with httpx.AsyncClient(timeout=8, transport=transport) as client:
                 resp = await client.get(
                     f"{self.base_url}/v1/models",
                     headers=self.headers,
