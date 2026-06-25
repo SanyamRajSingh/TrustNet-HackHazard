@@ -12,6 +12,8 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from sqlalchemy import func
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.serialization import sanitize_for_json
@@ -244,11 +246,13 @@ async def investigate(
 
     # Step 9: Upsert entity record
     if entities.get("website_url"):
+        import uuid
         entity_hash = hashlib.sha256(
             f"domain:{entities['website_url']}".encode()
         ).hexdigest()
-        # Upsert entity (simplified - full implementation would check existing)
-        entity = Entity(
+        
+        insert_stmt = sqlite_insert(Entity).values(
+            id=str(uuid.uuid4()),
             entity_type="domain",
             entity_value=entities["website_url"],
             entity_hash=entity_hash,
@@ -256,7 +260,18 @@ async def investigate(
             on_chain=bool(blockchain_tx),
             ring_name=ring_connections["rings"][0] if ring_connections["rings"] else None,
         )
-        db.add(entity)
+        
+        upsert_stmt = insert_stmt.on_conflict_do_update(
+            index_elements=["entity_hash"],
+            set_={
+                "investigation_count": Entity.investigation_count + 1,
+                "aggregate_score": func.max(Entity.aggregate_score, insert_stmt.excluded.aggregate_score),
+                "ring_name": func.coalesce(insert_stmt.excluded.ring_name, Entity.ring_name),
+                "last_refreshed_at": func.now(),
+            }
+        )
+        
+        await db.execute(upsert_stmt)
         await db.commit()
 
     # ── Build and serialize response ─────────────────────────────────────
