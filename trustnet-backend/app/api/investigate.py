@@ -281,8 +281,13 @@ async def _check_mca(company_name: Optional[str], db: AsyncSession):
 
 
 async def _check_whois(domain: Optional[str]):
+    from config import settings
     if not domain:
-        return {"found": False}
+        return {"found": False, "checked": False}
+    if not settings.WHOIS_API_KEY:
+        import structlog
+        structlog.get_logger().warning("skipping_whois_check", reason="WHOIS_API_KEY not set")
+        return {"found": False, "checked": False, "skipped": True}
     return await whois_service.lookup_domain(domain)
 
 
@@ -294,8 +299,13 @@ async def _check_dns(email: Optional[str]):
 
 
 async def _check_safebrowsing(url: Optional[str]):
+    from config import settings
     if not url:
         return {"checked": False, "flagged": False}
+    if not settings.GOOGLE_SAFE_BROWSING_KEY:
+        import structlog
+        structlog.get_logger().warning("skipping_safebrowsing_check", reason="GOOGLE_SAFE_BROWSING_KEY not set")
+        return {"checked": False, "flagged": False, "skipped": True}
     return await safebrowsing_service.check_url(url)
 
 
@@ -312,6 +322,11 @@ async def _check_urlhaus(url: Optional[str]):
 
 
 async def _check_phone(phone: Optional[str]):
+    from config import settings
     if not phone:
         return {"valid": False}
+    if not settings.NUMVERIFY_API_KEY:
+        import structlog
+        structlog.get_logger().warning("skipping_phone_check", reason="NUMVERIFY_API_KEY not set")
+        return {"valid": False, "checked": False, "skipped": True}
     return await phone_service.verify_phone(phone)

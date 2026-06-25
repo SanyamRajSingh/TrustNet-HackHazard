@@ -1,7 +1,7 @@
 """
 Health Router — extended service health checks.
 
-GET /api/v1/health/sarvam  — Ping the Sarvam AI API.
+GET /api/v1/health/sarvam   — Ping the Sarvam AI API (503 if down).
 GET /api/v1/health/services — Quick status of all external services.
 """
 
@@ -24,74 +24,61 @@ _sarvam = SarvamService()
     "/health/sarvam",
     summary="Sarvam AI health check",
     description=(
-        "Pings the Sarvam AI API and returns its availability status. "
-        "Use this for monitoring dashboards."
+        "Pings the Sarvam AI API. Returns 200 + model list when healthy, "
+        "raises 503 when unreachable."
     ),
     responses={
-        200: {
-            "description": "Health status",
-            "content": {
-                "application/json": {
-                    "examples": {
-                        "ok":      {"value": {"status": "ok"}},
-                        "degraded": {
-                            "value": {
-                                "status":   "degraded",
-                                "fallback": True,
-                                "reason":   "timeout",
-                            }
-                        },
-                    }
-                }
-            },
-        }
+        200: {"description": "Sarvam is reachable and key is valid"},
+        503: {"description": "Sarvam is unreachable or key is invalid"},
     },
 )
 async def sarvam_health() -> Dict[str, Any]:
     """
-    Ping the Sarvam AI API.
-
-    Returns:
-      - `{"status": "ok"}` when the API responds successfully.
-      - `{"status": "degraded", "fallback": true, "reason": "..."}` otherwise.
+    Ping the Sarvam AI API via GET /v1/models.
+    Returns 200 {"status": "ok", "models": [...], "active_model": "sarvam-30b"}
+    or raises 503 with the exact error reason.
     """
     result = await _sarvam.ping()
-    logger.info("health.sarvam", **result)
+    logger.info("health.sarvam.ok", **result)
     return result
 
 
 @router.get(
     "/health/services",
     summary="All external services health",
-    description="Returns availability of all external services: Sarvam, Neo4j, Redis.",
+    description="Returns availability of all external services: Sarvam AI and Neo4j.",
 )
 async def services_health() -> Dict[str, Any]:
     """Quick status summary of all external service dependencies."""
     from app.services.neo4j_service import Neo4jService
 
-    neo4j   = Neo4jService()
+    neo4j = Neo4jService()
 
-    # Run checks in parallel
+    # Run checks in parallel — capture exceptions without crashing
     sarvam_result, neo4j_ok = await asyncio.gather(
         _sarvam.ping(),
         neo4j.verify_connectivity(),
         return_exceptions=True,
     )
 
+    sarvam_status: Dict[str, Any]
     if isinstance(sarvam_result, Exception):
-        sarvam_result = {"status": "degraded", "fallback": True, "reason": str(sarvam_result)}
-    if isinstance(neo4j_ok, Exception):
-        neo4j_ok = False
+        sarvam_status = {"status": "error", "reason": str(sarvam_result)}
+    else:
+        sarvam_status = sarvam_result  # type: ignore[assignment]
 
-    all_ok = (
-        sarvam_result.get("status") == "ok"
-        and neo4j_ok is True
+    neo4j_status = (
+        {"status": "ok"}
+        if neo4j_ok is True
+        else {"status": "error", "reason": str(neo4j_ok)}
     )
 
+    all_ok = sarvam_status.get("status") == "ok" and neo4j_ok is True
+
     return {
-        "overall":  "ok" if all_ok else "degraded",
+        "overall": "ok" if all_ok else "degraded",
         "services": {
-            "sarvam_ai": sarvam_result,
-            "neo4j":     {"status": "ok" if neo4j_ok else "degraded"},
+            "sarvam_ai": sarvam_status,
+            "neo4j":     neo4j_status,
         },
     }

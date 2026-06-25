@@ -156,6 +156,11 @@ class Neo4jService:
     def __init__(self):
         if self._initialized:
             return
+        if not settings.NEO4J_URI or not settings.NEO4J_USERNAME or not settings.NEO4J_PASSWORD:
+            raise RuntimeError(
+                "Neo4j credentials are required but not configured. "
+                "Set NEO4J_URI, NEO4J_USERNAME, and NEO4J_PASSWORD in your environment."
+            )
         try:
             self.driver = AsyncGraphDatabase.driver(
                 settings.NEO4J_URI,
@@ -165,14 +170,14 @@ class Neo4jService:
                 keep_alive=True,
             )
             self._connected = True
+            logger.info("neo4j.driver_created", uri=settings.NEO4J_URI)
         except Exception as exc:
-            logger.warning(
-                "neo4j.init_failed — graph features disabled",
+            logger.error(
+                "neo4j.init_failed",
                 error=str(exc),
-                msg="Neo4j connection failed. All graph calls will return mock/empty data.",
+                uri=settings.NEO4J_URI,
             )
-            self.driver = None
-            self._connected = False
+            raise RuntimeError(f"Failed to create Neo4j driver: {exc}") from exc
         self._initialized = True
 
     async def close(self):
