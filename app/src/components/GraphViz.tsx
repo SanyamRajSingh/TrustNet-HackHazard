@@ -1,5 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Network } from 'lucide-react';
+import ForceGraph2D from 'react-force-graph-2d';
+import type { ForceGraphMethods } from 'react-force-graph-2d';
+import * as d3 from 'd3-force';
 
 interface GraphNode {
   id: number;
@@ -18,176 +21,82 @@ interface Props {
 }
 
 export default function GraphViz({ graphData }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef<number>(0);
+  const fgRef = useRef<ForceGraphMethods>();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const [initialCenterDone, setInitialCenterDone] = useState(false);
 
+  // Handle responsive resize
   useEffect(() => {
-    if (!graphData || !canvasRef.current) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    ctx.scale(dpr, dpr);
-
-    const w = rect.width;
-    const h = rect.height;
-
-    // Build node positions with force simulation
-    const nodeMap = new Map<number, { x: number; y: number; vx: number; vy: number; node: GraphNode }>();
-    graphData.nodes.forEach((n, i) => {
-      const angle = (i / graphData.nodes.length) * Math.PI * 2;
-      const dist = Math.min(w, h) * 0.25;
-      nodeMap.set(n.id, {
-        x: w / 2 + Math.cos(angle) * dist,
-        y: h / 2 + Math.sin(angle) * dist,
-        vx: 0, vy: 0,
-        node: n,
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver(entries => {
+      setDimensions({
+        width: entries[0].contentRect.width,
+        height: entries[0].contentRect.height
       });
     });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
 
-    function getNodeColor(labels: string[], props: Record<string, any>): string {
-      if (labels.includes('ScamRing')) return '#DC2626';
-      if (props.is_flagged) return '#F97316';
-      if (props.risk_score !== undefined && props.risk_score < 25) return '#EF4444';
-      if (labels.includes('Domain')) return '#6366F1';
-      if (labels.includes('Email')) return '#8B5CF6';
-      if (labels.includes('Phone')) return '#06B6D4';
-      if (labels.includes('Company')) return '#10B981';
-      if (labels.includes('Person')) return '#F59E0B';
-      return '#94A3B8';
-    }
-
-    function getNodeLabel(n: GraphNode): string {
-      const p = n.properties;
-      return p.value || p.name || n.labels[0] || String(n.id);
-    }
-
-    let tickCount = 0;
-    const MAX_TICKS = 300;
-
-    function tick() {
-      if (tickCount >= MAX_TICKS) {
-        // Just draw the final frame and stop
-        animRef.current = 0;
-        return;
-      }
-      tickCount++;
-
-      // Repulsion
-      const nodes = Array.from(nodeMap.values());
-      for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
-          const a = nodes[i], b = nodes[j];
-          const dx = b.x - a.x, dy = b.y - a.y;
-          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-          const force = 2000 / (dist * dist);
-          const fx = (dx / dist) * force, fy = (dy / dist) * force;
-          a.vx -= fx; a.vy -= fy;
-          b.vx += fx; b.vy += fy;
-        }
-      }
-
-      // Attraction (edges)
-      graphData.relationships.forEach((rel) => {
-        const a = nodeMap.get(rel.start), b = nodeMap.get(rel.end);
-        if (!a || !b) return;
-        const dx = b.x - a.x, dy = b.y - a.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const force = dist * 0.001;
-        const fx = (dx / dist) * force, fy = (dy / dist) * force;
-        a.vx += fx; a.vy += fy;
-        b.vx -= fx; b.vy -= fy;
-      });
-
-      // Center gravity
-      nodes.forEach((n) => {
-        n.vx += (w / 2 - n.x) * 0.005;
-        n.vy += (h / 2 - n.y) * 0.005;
-        n.vx *= 0.85;
-        n.vy *= 0.85;
-        n.x += n.vx;
-        n.y += n.vy;
-        n.x = Math.max(30, Math.min(w - 30, n.x));
-        n.y = Math.max(30, Math.min(h - 30, n.y));
-      });
-
-      // Draw
-      ctx!.clearRect(0, 0, w, h);
-
-      // Edges
-      graphData.relationships.forEach((rel) => {
-        const a = nodeMap.get(rel.start), b = nodeMap.get(rel.end);
-        if (!a || !b) return;
-        ctx!.beginPath();
-        ctx!.strokeStyle = rel.type === 'IMPERSONATES' ? '#EF4444' :
-                          rel.type === 'BELONGS_TO_RING' ? '#DC2626' :
-                          rel.type === 'REPORTED_WITH' ? '#6366F1' : '#CBD5E1';
-        ctx!.lineWidth = rel.type === 'IMPERSONATES' ? 2.5 : 1.5;
-        if (rel.type === 'IMPERSONATES' || rel.type === 'BELONGS_TO_RING') {
-          ctx!.setLineDash([5, 5]);
-        } else {
-          ctx!.setLineDash([]);
-        }
-        ctx!.moveTo(a.x, a.y);
-        ctx!.lineTo(b.x, b.y);
-        ctx!.stroke();
-        ctx!.setLineDash([]);
-
-        // Edge label
-        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-        ctx!.fillStyle = '#94A3B8';
-        ctx!.font = '9px sans-serif';
-        ctx!.textAlign = 'center';
-        ctx!.fillText(rel.type, mx, my - 4);
-      });
-
-      // Nodes
-      nodes.forEach((n) => {
-        const color = getNodeColor(n.node.labels, n.node.properties);
-        const isFlagged = n.node.properties.is_flagged;
-
-        // Glow for flagged
-        if (isFlagged) {
-          ctx!.beginPath();
-          ctx!.arc(n.x, n.y, 22, 0, Math.PI * 2);
-          ctx!.fillStyle = 'rgba(239, 68, 68, 0.15)';
-          ctx!.fill();
-        }
-
-        ctx!.beginPath();
-        ctx!.arc(n.x, n.y, 14, 0, Math.PI * 2);
-        ctx!.fillStyle = color;
-        ctx!.fill();
-        ctx!.strokeStyle = '#fff';
-        ctx!.lineWidth = 2.5;
-        ctx!.stroke();
-
-        // Label
-        const label = getNodeLabel(n.node);
-        ctx!.fillStyle = '#1E293B';
-        ctx!.font = '11px sans-serif';
-        ctx!.textAlign = 'center';
-        ctx!.fillText(label.length > 20 ? label.slice(0, 20) + '...' : label, n.x, n.y + 28);
-
-        // Type label
-        ctx!.fillStyle = '#64748B';
-        ctx!.font = '9px sans-serif';
-        ctx!.fillText(n.node.labels[0] || '', n.x, n.y + 40);
-      });
-
-      animRef.current = requestAnimationFrame(tick);
-    }
-
-    tick();
-
-    return () => {
-      if (animRef.current) cancelAnimationFrame(animRef.current);
+  // Transform Neo4j data to ForceGraph format
+  const fgData = useMemo(() => {
+    if (!graphData) return { nodes: [], links: [] };
+    return {
+      nodes: graphData.nodes.map(n => ({ ...n, val: getNodeSize(n.labels) })),
+      links: graphData.relationships.map(r => ({
+        source: r.start,
+        target: r.end,
+        type: r.type
+      }))
     };
   }, [graphData]);
+
+  // Sizing logic
+  function getNodeSize(labels: string[]) {
+    if (labels.includes('ScamRing')) return 20;
+    if (labels.includes('Domain')) return 14;
+    return 10;
+  }
+
+  // Coloring logic
+  function getNodeColor(labels: string[], props: Record<string, any>): string {
+    if (labels.includes('ScamRing')) return '#DC2626';
+    if (props.is_flagged) return '#F97316';
+    if (props.risk_score !== undefined && props.risk_score < 25) return '#EF4444';
+    if (labels.includes('Domain')) return '#6366F1';
+    if (labels.includes('Email')) return '#8B5CF6';
+    if (labels.includes('Phone')) return '#06B6D4';
+    if (labels.includes('Company')) return '#10B981';
+    if (labels.includes('Person')) return '#F59E0B';
+    return '#94A3B8';
+  }
+
+  function getNodeLabel(n: any): string {
+    const p = n.properties;
+    return p.value || p.name || n.labels[0] || String(n.id);
+  }
+
+  // Custom Physics config
+  useEffect(() => {
+    const fg = fgRef.current;
+    if (fg) {
+      // Modify existing forces instead of overwriting to preserve internal linkages
+      fg.d3Force('charge')?.strength(-600);
+      fg.d3Force('link')?.distance(120);
+      fg.d3Force('collide', d3.forceCollide().radius((node: any) => node.val + 20));
+      
+      // Trigger a reheat to apply the new forces
+      fg.d3ReheatSimulation();
+    }
+  }, [fgData, dimensions]);
+
+  const handleEngineStop = useCallback(() => {
+    if (!initialCenterDone && fgRef.current) {
+      fgRef.current.zoomToFit(400, 50);
+      setInitialCenterDone(true);
+    }
+  }, [initialCenterDone]);
 
   if (!graphData || graphData.nodes.length === 0) {
     return (
@@ -198,36 +107,110 @@ export default function GraphViz({ graphData }: Props) {
     );
   }
 
+  const isHierarchical = fgData.nodes.length <= 5;
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold text-slate-900">Connection Graph</h3>
         {graphData.nodes.some(n => n.properties.is_flagged || n.labels.includes('ScamRing')) && (
-          <span className="text-xs px-2 py-1 rounded-full bg-red-100 text-red-700 font-medium">
-            Connected to flagged entities
+          <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800">
+            High Risk Network
           </span>
         )}
       </div>
-      <div className="rounded-xl border border-slate-200 overflow-hidden">
-        <canvas
-          ref={canvasRef}
-          style={{ width: '100%', height: '400px' }}
-          className="cursor-grab active:cursor-grabbing"
-        />
-      </div>
-      <div className="flex flex-wrap gap-3 text-xs text-slate-500">
-        {[
-          { color: '#6366F1', label: 'Domain' },
-          { color: '#8B5CF6', label: 'Email' },
-          { color: '#06B6D4', label: 'Phone' },
-          { color: '#10B981', label: 'Company' },
-          { color: '#DC2626', label: 'Flagged / Scam Ring' },
-        ].map((item) => (
-          <div key={item.label} className="flex items-center gap-1.5">
-            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-            <span>{item.label}</span>
-          </div>
-        ))}
+
+      <div 
+        ref={containerRef} 
+        className="h-[450px] w-full rounded-xl border border-slate-200 bg-slate-50 overflow-hidden relative cursor-grab active:cursor-grabbing"
+      >
+        {dimensions.width > 0 && (
+          <ForceGraph2D
+            ref={fgRef as any}
+            width={dimensions.width}
+            height={dimensions.height}
+            graphData={fgData}
+            dagMode={isHierarchical ? 'td' : undefined}
+            dagLevelDistance={100}
+            nodeRelSize={1}
+            nodeId="id"
+            // Tooltip (hover text)
+            nodeLabel={getNodeLabel}
+            // Rendering nodes
+            nodeCanvasObject={(node: any, ctx, globalScale) => {
+              const label = getNodeLabel(node);
+              const fontSize = 12 / globalScale;
+              const r = node.val;
+              const color = getNodeColor(node.labels, node.properties);
+
+              // Glow for flagged
+              if (node.properties.is_flagged) {
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, r + 8, 0, 2 * Math.PI, false);
+                ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
+                ctx.fill();
+              }
+
+              // Node circle
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
+              ctx.fillStyle = color;
+              ctx.fill();
+              ctx.strokeStyle = '#fff';
+              ctx.lineWidth = 2 / globalScale;
+              ctx.stroke();
+
+              // Text Label
+              ctx.font = `${fontSize}px Sans-Serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillStyle = '#1E293B';
+              
+              const shortLabel = label.length > 20 ? label.slice(0, 20) + '...' : label;
+              ctx.fillText(shortLabel, node.x, node.y + r + 10 / globalScale);
+              
+              // Node Type Label
+              ctx.fillStyle = '#64748B';
+              ctx.font = `${fontSize * 0.8}px Sans-Serif`;
+              ctx.fillText(node.labels[0] || '', node.x, node.y + r + 22 / globalScale);
+            }}
+            // Edge styling
+            linkColor={(link: any) => {
+              if (link.type === 'IMPERSONATES') return '#EF4444';
+              if (link.type === 'BELONGS_TO_RING') return '#DC2626';
+              if (link.type === 'REPORTED_WITH') return '#6366F1';
+              return '#CBD5E1';
+            }}
+            linkWidth={(link: any) => link.type === 'IMPERSONATES' ? 2 : 1}
+            linkLineDash={(link: any) => 
+              ['IMPERSONATES', 'BELONGS_TO_RING'].includes(link.type) ? [5, 5] : []
+            }
+            // Link Labels
+            linkCanvasObjectMode={() => 'after'}
+            linkCanvasObject={(link: any, ctx, globalScale) => {
+              const start = link.source;
+              const end = link.target;
+              if (typeof start !== 'object' || typeof end !== 'object') return;
+              
+              const PosX = start.x + (end.x - start.x) / 2;
+              const PosY = start.y + (end.y - start.y) / 2;
+              
+              ctx.font = `${9 / globalScale}px Sans-Serif`;
+              ctx.fillStyle = '#94A3B8';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              
+              // Add a slight white background to text to avoid edge overlap
+              const textWidth = ctx.measureText(link.type).width;
+              ctx.fillStyle = 'rgba(248, 250, 252, 0.8)'; // matches slate-50
+              ctx.fillRect(PosX - textWidth/2 - 2, PosY - 6/globalScale, textWidth + 4, 12/globalScale);
+              
+              ctx.fillStyle = '#94A3B8';
+              ctx.fillText(link.type, PosX, PosY);
+            }}
+            onEngineStop={handleEngineStop}
+          />
+        )}
       </div>
     </div>
   );
