@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build:
@@ -7,20 +5,23 @@ services:
       dockerfile: Dockerfile.backend
     ports:
       - "8000:8000"
+    env_file:
+      - ./trustnet-backend/.env
     environment:
-      - DATABASE_URL=sqlite+aiosqlite:///./test.db
-      - NEO4J_URI=${NEO4J_URI}
-      - NEO4J_USERNAME=${NEO4J_USERNAME}
-      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
-      - SARVAM_API_KEY=${SARVAM_API_KEY}
-      - WHOIS_API_KEY=${WHOIS_API_KEY}
-      - GOOGLE_SAFE_BROWSING_KEY=${GOOGLE_SAFE_BROWSING_KEY}
-      - NUMVERIFY_API_KEY=${NUMVERIFY_API_KEY}
+      # Override DB to ensure SQLite is used inside container
+      - DATABASE_URL=sqlite+aiosqlite:///./trustnet.db
       - BLOCKCHAIN_ENABLED=false
-    volumes:
-      - ./trustnet-backend:/app
-      # Exclude the virtual environment from volume mount
-      - /app/.venv4
+      # Optional API keys — explicitly empty means "skip that check"
+      - WHOIS_API_KEY=${WHOIS_API_KEY:-}
+      - GOOGLE_SAFE_BROWSING_KEY=${GOOGLE_SAFE_BROWSING_KEY:-}
+      - NUMVERIFY_API_KEY=${NUMVERIFY_API_KEY:-}
+    # No volume mount — use the built image directly (production-like)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 
   frontend:
     build:
@@ -29,4 +30,5 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
