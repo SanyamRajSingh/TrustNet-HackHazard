@@ -21,7 +21,7 @@ interface Props {
 }
 
 export default function GraphViz({ graphData }: Props) {
-  const fgRef = useRef<ForceGraphMethods>();
+  const fgRef = useRef<ForceGraphMethods>(null as any);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [initialCenterDone, setInitialCenterDone] = useState(false);
@@ -107,7 +107,7 @@ export default function GraphViz({ graphData }: Props) {
     );
   }
 
-  const isHierarchical = fgData.nodes.length <= 5;
+  const isHierarchical = fgData.nodes.length <= 8;
 
   return (
     <div className="space-y-3">
@@ -188,6 +188,9 @@ export default function GraphViz({ graphData }: Props) {
             // Link Labels
             linkCanvasObjectMode={() => 'after'}
             linkCanvasObject={(link: any, ctx, globalScale) => {
+              // Hide edge labels until zoomed in
+              if (globalScale < 1.5) return;
+
               const start = link.source;
               const end = link.target;
               if (typeof start !== 'object' || typeof end !== 'object') return;
