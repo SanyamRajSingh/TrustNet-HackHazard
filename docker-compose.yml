@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///./test.db
+      - NEO4J_URI=${NEO4J_URI}
+      - NEO4J_USERNAME=${NEO4J_USERNAME}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - SARVAM_API_KEY=${SARVAM_API_KEY}
+      - WHOIS_API_KEY=${WHOIS_API_KEY}
+      - GOOGLE_SAFE_BROWSING_KEY=${GOOGLE_SAFE_BROWSING_KEY}
+      - NUMVERIFY_API_KEY=${NUMVERIFY_API_KEY}
+      - BLOCKCHAIN_ENABLED=false
+    volumes:
+      - ./trustnet-backend:/app
+      # Exclude the virtual environment from volume mount
+      - /app/.venv4
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend

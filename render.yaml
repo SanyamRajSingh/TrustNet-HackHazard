@@ -1,0 +1,49 @@
+services:
+  # -------------------------
+  # 1. FastAPI Backend (Web Service)
+  # -------------------------
+  - type: web
+    name: trustnet-backend
+    env: docker
+    dockerfilePath: ./Dockerfile.backend
+    region: singapore
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///./test.db
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USERNAME
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: WHOIS_API_KEY
+        sync: false
+      - key: GOOGLE_SAFE_BROWSING_KEY
+        sync: false
+      - key: NUMVERIFY_API_KEY
+        sync: false
+      - key: BASE_SEPOLIA_RPC
+        sync: false
+      - key: BACKEND_WALLET_PRIVATE_KEY
+        sync: false
+      - key: TRUSTNET_CONTRACT_ADDRESS
+        sync: false
+      - key: BLOCKCHAIN_ENABLED
+        value: "false"
+
+  # -------------------------
+  # 2. React Frontend (Static Site)
+  # -------------------------
+  - type: web
+    name: trustnet-frontend
+    env: docker
+    dockerfilePath: ./Dockerfile.frontend
+    region: singapore
+    plan: free
+    # Note: If you prefer a native static site, you can change `type: web` to `type: static`,
+    # set `buildCommand: npm install && npm run build` and `publishPath: dist`.
+    # But this uses the Dockerfile.frontend for parity with local testing.

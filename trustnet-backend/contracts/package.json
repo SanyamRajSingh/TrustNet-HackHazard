@@ -1,0 +1,17 @@
+{
+  "name": "trustnet-contracts",
+  "version": "1.0.0",
+  "description": "TrustNet Registry smart contract - Base Sepolia",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:local": "hardhat run scripts/deploy.js --network hardhat",
+    "deploy:sepolia": "hardhat run scripts/deploy.js --network base_sepolia",
+    "verify": "hardhat verify --network base_sepolia"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "dotenv": "^16.3.1",
+    "hardhat": "^2.19.0"
+  }
+}
