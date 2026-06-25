@@ -2,6 +2,7 @@
 TrustNet - FastAPI Application Entry Point
 """
 
+import os
 import time
 
 import structlog
@@ -24,9 +25,12 @@ app = FastAPI(
 )
 
 # Middleware
+cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:5173")
+origins = [origin.strip() for origin in cors_origins.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.get_cors_origins(),
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
